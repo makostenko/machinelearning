@@ -48,7 +48,9 @@ def split_data(
         random_state=random_state,
         stratify=df[target_col]
     )
-    input_cols = list(df.columns)[1:-1]  # skip id and target
+    
+    # exclude 'id', 'Surname' 
+    input_cols = [col for col in df.columns if col not in ['id', 'Surname', target_col]]
 
     train_X = train_df[input_cols].copy()
     train_y = train_df[target_col]
