@@ -1,190 +1,197 @@
-import numpy as np
 import pandas as pd
-from typing import Tuple, Dict
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, f1_score, confusion_matrix, roc_curve
-import matplotlib.pyplot as plt
+from sklearn.preprocessing import OneHotEncoder, MinMaxScaler
+from typing import Tuple, Dict, Any
 
 
-def load_data(filepath: str) -> pd.DataFrame:
+def split_train_val(df: pd.DataFrame, target_col: str, test_size: float = 0.2, random_state: int = 42) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Load data from a CSV file.
+    Розділити датафрейм на навчальну та валідаційну вибірки.
 
-    Args:
-        filepath: Path to the CSV file.
+    Аргументи:
+        df (pd.DataFrame): Початковий датафрейм.
+        target_col (str): Назва цільової колонки для стратифікації.
+        test_size (float): Частка вибірки для валідації.
+        random_state (int): Фіксоване зерно для відтворюваності.
 
-    Returns:
-        DataFrame containing the loaded data.
+    Повертає:
+        Tuple[pd.DataFrame, pd.DataFrame]: Навчальний і валідаційний датафрейми.
     """
-    df = pd.read_csv(filepath)
-    print(df.head())
-    print(df.info())
-    return df
+    train_df, val_df = train_test_split(df, test_size=test_size, random_state=random_state, stratify=df[target_col])
+    return train_df, val_df
 
 
-def split_data(
-    df: pd.DataFrame,
-    target_col: str,
-    test_size: float = 0.2,
-    random_state: int = 42
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+def separate_inputs_targets(df: pd.DataFrame, input_cols: list, target_col: str) -> Tuple[pd.DataFrame, pd.Series]:
     """
-    Split data into train/validation sets with stratification.
+    Відокремити ознаки та ціль із датафрейму.
 
-    Args:
-        df: The full dataframe.
-        target_col: Name of the target column.
-        test_size: Fraction of data for validation.
-        random_state: Random seed.
+    Аргументи:
+        df (pd.DataFrame): Датафрейм.
+        input_cols (list): Список колонок ознак.
+        target_col (str): Назва цільової колонки.
 
-    Returns:
-        Tuple of train inputs, validation inputs, train targets, validation targets.
+    Повертає:
+        Tuple[pd.DataFrame, pd.Series]: Ознаки (DataFrame) та ціль (Series).
     """
-    train_df, val_df = train_test_split(
-        df,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=df[target_col]
-    )
-    
-    # exclude 'id', 'Surname' 
-    input_cols = [col for col in df.columns if col not in ['id', 'Surname', target_col]]
-
-    train_X = train_df[input_cols].copy()
-    train_y = train_df[target_col]
-    val_X = val_df[input_cols].copy()
-    val_y = val_df[target_col]
-
-    return train_X, val_X, train_y, val_y
+    inputs = df[input_cols].copy()
+    targets = df[target_col].copy()
+    return inputs, targets
 
 
-def preprocess_data(
-    train_X: pd.DataFrame,
-    val_X: pd.DataFrame
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def fit_scaler(train_inputs: pd.DataFrame, numeric_cols: list) -> MinMaxScaler:
     """
-    Scale numeric columns and one-hot encode categorical columns.
+    Навчити MinMaxScaler на навчальних даних.
 
-    Args:
-        train_X: Training features.
-        val_X: Validation features.
+    Аргументи:
+        train_inputs (pd.DataFrame): Навчальні ознаки.
+        numeric_cols (list): Список числових колонок.
 
-    Returns:
-        Tuple of preprocessed train and validation features.
+    Повертає:
+        MinMaxScaler: Навчений масштабувач.
     """
-    numeric_cols = train_X.select_dtypes(include=np.number).columns.tolist()
-    categorical_cols = train_X.select_dtypes(include='object').columns.tolist()
-
-    # Scale numeric
-    scaler = MinMaxScaler()
-    train_X[numeric_cols] = scaler.fit_transform(train_X[numeric_cols])
-    val_X[numeric_cols] = scaler.transform(val_X[numeric_cols])
-
-    # One-hot encode categorical
-    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-    encoder.fit(train_X[categorical_cols])
-
-    encoded_cols = list(encoder.get_feature_names_out(categorical_cols))
-    train_encoded = encoder.transform(train_X[categorical_cols])
-    val_encoded = encoder.transform(val_X[categorical_cols])
-
-    train_X = pd.concat(
-        [train_X.drop(columns=categorical_cols).reset_index(drop=True),
-         pd.DataFrame(train_encoded, columns=encoded_cols)],
-        axis=1
-    )
-    val_X = pd.concat(
-        [val_X.drop(columns=categorical_cols).reset_index(drop=True),
-         pd.DataFrame(val_encoded, columns=encoded_cols)],
-        axis=1
-    )
-
-    return train_X, val_X
+    scaler = MinMaxScaler().fit(train_inputs[numeric_cols])
+    return scaler
 
 
-def train_model(
-    X: pd.DataFrame,
-    y: pd.Series
-) -> LogisticRegression:
+def scale_numeric_features(scaler: MinMaxScaler, inputs: pd.DataFrame, numeric_cols: list) -> None:
     """
-    Train a logistic regression model.
+    Масштабувати числові ознаки за допомогою переданого масштабувача.
 
-    Args:
-        X: Training features.
-        y: Training labels.
-
-    Returns:
-        Trained LogisticRegression model.
+    Аргументи:
+        scaler (MinMaxScaler): Навчений масштабувач.
+        inputs (pd.DataFrame): Ознаки для масштабування.
+        numeric_cols (list): Список числових колонок.
     """
-    model = LogisticRegression(solver='liblinear')
-    model.fit(X, y)
-    return model
+    inputs[numeric_cols] = scaler.transform(inputs[numeric_cols])
 
 
-def evaluate_model(
-    model: LogisticRegression,
-    X: pd.DataFrame,
-    y_true: pd.Series,
-    dataset_name: str
-) -> None:
+def fit_encoder(train_inputs: pd.DataFrame, categorical_cols: list) -> OneHotEncoder:
     """
-    Print evaluation metrics and plot ROC curve.
+    Навчити OneHotEncoder на категоріальних колонках.
 
-    Args:
-        model: Trained classifier.
-        X: Features.
-        y_true: True labels.
-        dataset_name: Label for the dataset (e.g., 'Train').
+    Аргументи:
+        train_inputs (pd.DataFrame): Навчальні ознаки.
+        categorical_cols (list): Список категоріальних колонок.
+
+    Повертає:
+        OneHotEncoder: Навчений енкодер.
     """
-    y_pred = model.predict(X)
-    y_proba = model.predict_proba(X)[:, 1]
-
-    auc = roc_auc_score(y_true, y_proba)
-    f1 = f1_score(y_true, y_pred)
-    cm = confusion_matrix(y_true, y_pred)
-
-    print(f"{dataset_name} AUC: {auc:.4f}")
-    print(f"{dataset_name} F1 Score: {f1:.4f}")
-    print(f"{dataset_name} Confusion Matrix:\n{cm}")
-
-    fpr, tpr, _ = roc_curve(y_true, y_proba)
-    plt.figure(figsize=(6, 4))
-    plt.plot(fpr, tpr, label=f'{dataset_name} ROC Curve (AUC = {auc:.2f})')
-    plt.plot([0, 1], [0, 1], 'k--')
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title(f'{dataset_name} ROC Curve')
-    plt.legend()
-    plt.show()
+    encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore').fit(train_inputs[categorical_cols])
+    return encoder
 
 
-def run_pipeline(filepath: str = '/Users/mariiakostenko/Downloads/ML/Модуль 3. Дерева прийняття рішень/train.csv') -> Dict[str, pd.DataFrame]:
+def encode_categorical_features(encoder: OneHotEncoder, inputs: pd.DataFrame, categorical_cols: list) -> pd.DataFrame:
     """
-    Main pipeline function to run data loading, preprocessing, training, and evaluation.
+    Закодувати категоріальні ознаки за допомогою енкодера.
 
-    Args:
-        filepath: Path to the training CSV.
+    Аргументи:
+        encoder (OneHotEncoder): Навчений енкодер.
+        inputs (pd.DataFrame): Ознаки для кодування.
+        categorical_cols (list): Список категоріальних колонок.
 
-    Returns:
-        Dictionary with train and validation features and targets.
+    Повертає:
+        pd.DataFrame: Датафрейм із закодованими категоріальними ознаками.
     """
-    raw_df = load_data(filepath)
+    encoded = encoder.transform(inputs[categorical_cols])
+    encoded_df = pd.DataFrame(encoded, columns=encoder.get_feature_names_out(categorical_cols), index=inputs.index)
+    inputs = inputs.drop(columns=categorical_cols)
+    return pd.concat([inputs, encoded_df], axis=1)
 
+
+def preprocess_data(raw_df: pd.DataFrame, scale_numeric: bool = True) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series, list, MinMaxScaler, OneHotEncoder]:
+    """
+    Попередньо обробити сирий датафрейм.
+
+    Аргументи:
+        raw_df (pd.DataFrame): Сирий датафрейм.
+        scale_numeric (bool): Чи масштабувати числові ознаки.
+
+    Повертає:
+        Tuple:
+            - Навчальні ознаки (DataFrame)
+            - Навчальні цілі (Series)
+            - Валідаційні ознаки (DataFrame)
+            - Валідаційні цілі (Series)
+            - Список вхідних колонок
+            - Навчений масштабувач
+            - Навчений енкодер
+    """
+    # Розбити дані на навчальну та валідаційну вибірки
+    train_df, val_df = split_train_val(raw_df, 'Exited')
+
+    # Визначити список вхідних колонок
+    input_cols = list(train_df.columns)[1:-1]
+    input_cols.remove('Surname')
     target_col = 'Exited'
-    train_X, val_X, train_y, val_y = split_data(raw_df, target_col)
 
-    train_X, val_X = preprocess_data(train_X, val_X)
+    # Відокремити ознаки та ціль
+    train_inputs, train_targets = separate_inputs_targets(train_df, input_cols, target_col)
+    val_inputs, val_targets = separate_inputs_targets(val_df, input_cols, target_col)
 
-    model = train_model(train_X, train_y)
+    # Знайти числові та категоріальні колонки
+    numeric_cols = train_inputs.select_dtypes(include=np.number).columns.tolist()
+    categorical_cols = train_inputs.select_dtypes(include='object').columns.tolist()
 
-    evaluate_model(model, train_X, train_y, 'Train')
-    evaluate_model(model, val_X, val_y, 'Validation')
+    # Масштабування числових ознак
+    scaler = None
+    if scale_numeric:
+        scaler = fit_scaler(train_inputs, numeric_cols)
+        scale_numeric_features(scaler, train_inputs, numeric_cols)
+        scale_numeric_features(scaler, val_inputs, numeric_cols)
 
-    return {
-        'train_X': train_X,
-        'train_Y': train_y,
-        'val_X': val_X,
-        'val_Y': val_y
-    }
+    # Кодування категоріальних ознак
+    encoder = fit_encoder(train_inputs, categorical_cols)
+    train_inputs = encode_categorical_features(encoder, train_inputs, categorical_cols)
+    val_inputs = encode_categorical_features(encoder, val_inputs, categorical_cols)
+
+    # Повертаємо всі потрібні об'єкти
+    return train_inputs, train_targets, val_inputs, val_targets, input_cols, scaler, encoder
+
+
+def preprocess_new_data(new_df: pd.DataFrame, input_cols: list, scaler: MinMaxScaler, encoder: OneHotEncoder, scale_numeric: bool = True) -> pd.DataFrame:
+    """
+    Попередньо обробити нові дані з використанням переданого масштабувача та енкодера.
+
+    Аргументи:
+        new_df (pd.DataFrame): Новий датафрейм.
+        input_cols (list): Список вхідних колонок.
+        scaler (MinMaxScaler): Навчений масштабувач.
+        encoder (OneHotEncoder): Навчений енкодер.
+        scale_numeric (bool): Чи масштабувати числові ознаки.
+
+    Повертає:
+        pd.DataFrame: Оброблені ознаки для нових даних.
+    """
+    inputs = new_df[input_cols].copy()
+
+    # Знайти числові та категоріальні колонки
+    numeric_cols = inputs.select_dtypes(include=np.number).columns.tolist()
+    categorical_cols = inputs.select_dtypes(include='object').columns.tolist()
+
+    # Масштабування числових ознак
+    if scale_numeric:
+        scale_numeric_features(scaler, inputs, numeric_cols)
+
+    # Кодування категоріальних ознак
+    inputs = encode_categorical_features(encoder, inputs, categorical_cols)
+
+    return inputs
+
+
+#if __name__ == "__main__":
+    # 1. Зчитати CSV
+    #df = pd.read_csv("/Users/mariiakostenko/Downloads/ML/Модуль 3. Дерева прийняття рішень/train.csv")
+
+    # 2. Викликати preprocess_data
+    #X_train, y_train, X_val, y_val, input_cols, scaler, encoder = preprocess_data(df)
+
+    # 3. Перевірити результат
+    #print("X_train shape:", X_train.shape)
+    #print("X_val shape:", X_val.shape)
+    #print("Приклад рядка:")
+    #print(X_train.iloc[0])
+
+    # 4. Зберегти оброблені дані якщо треба
+    #X_train.to_csv("X_train_processed.csv", index=False)
+    #X_val.to_csv("X_val_processed.csv", index=False)
